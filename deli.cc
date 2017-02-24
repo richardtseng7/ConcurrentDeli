@@ -24,10 +24,10 @@ std::map<int, std::vector<int> > cashierMap;
 
 unsigned int hasRoom = 2;
 unsigned int isFull = 3;
-unsigned int cashierFree = 4;
 int lastOrder = - 1;
+int waiters = 0;
 
-// helper method checks if cashier
+// helper method checks if cashier has posted on corkboard
 bool ifContains(int cashierID) {
 	if (corkboard.empty()) {
 		return false;
@@ -45,76 +45,88 @@ bool ifContains(int cashierID) {
 
 void sandwichMaker(void* arg){
 	thread_lock(1);
-	//printf("%d\n", (int) corkboard.size());
-	//printf("%d\n", max_orders);
-
-	while(((int) corkboard.size()) < max_orders){ // while there is still room in corkboard, let cashier add orders
-		thread_wait(1, isFull);
-	}
-	// find most similar sandwich to make
-	int min = INT_MAX;
-	int ind;
-	int currCashier;
-	int currSandwich;
-	for (int i = 0; i < ((int) corkboard.size()); i++){
-		int diff = abs(lastOrder - corkboard[i].sandwichNum);
-		if (diff < min){ 
-			min = diff;
-			ind = i;
-			currCashier = corkboard[i].cashierNum;
-			currSandwich = corkboard[i].sandwichNum;
+	while (numCashier != 0){
+		//DEBUG
+		printf("sandwichMaker \n");
+		for (int i = 0; i < corkboard.size(); i++){
+			printf("Cashier %d: Sandwich %d, \n", corkboard[i].cashierNum, corkboard[i].sandwichNum);
 		}
-	}
-	lastOrder = currSandwich;
-	if(ifContains((intptr_t) currCashier)){
-		thread_signal(1, cashierFree);
-	}
-	else{
-		thread_signal(1, hasRoom);
-	}
-	//print cur sandwich number & cur cashier id
-	cout << "READY: cashier " << currCashier << " sandwich " << currSandwich << endl; 
-	//remove currSandwich from the map
-	cashierMap[currCashier].erase(cashierMap[currCashier].begin());
-	//remove last sandwich order from corkboard
-	corkboard.erase(corkboard.begin() + ind);
-	//broadcast that now the corkboard hasRoom!
-	
-	
+
+		// while there is still room in corkboard, let cashier add orders
+		while(((int) corkboard.size()) < max_orders){ 
+			thread_broadcast(1, hasRoom);
+			thread_wait(1, isFull);
+		}
+		// find most similar sandwich to make
+		int min = INT_MAX;
+		int ind;
+		int currCashier;
+		int currSandwich;
+		for (int i = 0; i < ((int) corkboard.size()); i++){
+			int diff = abs(lastOrder - corkboard[i].sandwichNum);
+			if (diff < min){ 
+				min = diff;
+				ind = i;
+				currCashier = corkboard[i].cashierNum;
+				currSandwich = corkboard[i].sandwichNum;
+			}
+		}
+		lastOrder = currSandwich;
+		thread_broadcast(1, hasRoom);
+		if (waiters > 0){
+			waiters = waiters - 1;
+			thread_signal(1, (currCashier + 100));
+		}
+		//print currSandwich number & currCashierID
+		cout << "READY: cashier " << currCashier << " sandwich " << currSandwich << endl; 
+		//remove last sandwich order from corkboard
+		corkboard.erase(corkboard.begin() + ind);
+		
+	}	
 	thread_unlock(1);
 }
 
 
 void cashiers(void* cashierid){
+	thread_lock(1);	
 	int cashierID = (intptr_t) cashierid;
+	//while there are still orders
+	while (cashierMap[cashierID].size() > 0){
 	
-	// while( cashierMap[cashierID].size > 0) {
-	thread_lock(1);	// corkboard is full
-	while (corkboard.size() == max_orders){
-		thread_wait(1, hasRoom);
+		// cashier already has an order on corkboard
+		while (ifContains((intptr_t) cashierID)) {
+			waiters++;
+			thread_wait(1, (cashierID + 100));
+		}
+		while (((int)corkboard.size()) == max_orders){
+			thread_signal(1, isFull);
+			thread_wait(1, hasRoom);
+		}
+		if (numCashier < max_orders){
+			max_orders = numCashier;
+		}	
+
+		printf("corkboard size: %d, max_orders: %d", (int) corkboard.size(), max_orders);
+		printf("Cashier %d:", cashierID);
+		for(int i = 0; i < cashierMap[cashierID].size(); i++){
+			printf("%d,", cashierMap[cashierID][i]);
+		}
+		printf("\n");
+		// add order from cashierMap to corkboard
+		orders toAdd;
+		toAdd.cashierNum = cashierID;
+		toAdd.sandwichNum = cashierMap[cashierID][0];
+		corkboard.push_back(toAdd);
+		cashierMap[cashierID].erase(cashierMap[cashierID].begin());
+
+		// print sandwich order
+		cout << "POSTED: cashier " << toAdd.cashierNum << " sandwich " << toAdd.sandwichNum << endl; 
 	}
-	// cashier already has an order on corkboard
-	while (ifContains((intptr_t) cashierID)) {
-		thread_wait(1, cashierFree);
-	}
-	// cashier is done (has no more orders left)
-	if (cashierMap[cashierID].size() == 0){
-		max_orders = max_orders - 1;
-		thread_unlock(1);
-	}
-	// add order from cashier to corkboard
-	orders toAdd;
-	toAdd.cashierNum = cashierID;
-	toAdd.sandwichNum = cashierMap[cashierID][0];
-	corkboard.push_back(toAdd);
-	// print sandwich order
-	cout << "POSTED: cashier " << toAdd.cashierNum << " sandwich " << toAdd.sandwichNum << endl; 
-	if (corkboard.size() == max_orders){
-		sandwichMaker((void *) (intptr_t) 14); 
-		//thread_signal(1, isFull);
+	numCashier = numCashier - 1;
+	if (corkboard.size() > max_orders){
+		thread_signal(1, isFull);
 	}
 	thread_unlock(1);
-	// }
 }
 
 
@@ -122,11 +134,10 @@ void cashierInit(void* arg){
 	// initialize all cashiers threads
 	for (int i = 0; i < numCashier; i++){ 
 		thread_create((thread_startfunc_t) cashiers, (void *) (intptr_t) i);
-		cashiers((void *) (intptr_t) i);
 	}
 	// initialize sandwich maker thread
 	thread_create((thread_startfunc_t) sandwichMaker, (void *) 14);
-	sandwichMaker((void *) 14);
+
 }
 
 
