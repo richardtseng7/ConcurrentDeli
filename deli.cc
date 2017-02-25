@@ -46,7 +46,6 @@ bool ifContains(int cashierID) {
 
 
 void sandwichMaker(void* arg){
-	//thread_lock(1);
 	while ((corkboard.size() > 0) || (cashiers_alive > 0)){	
 		thread_lock(1);
 		while(corkboard.size() < min(cashiers_alive, max_orders)){ 
@@ -78,12 +77,10 @@ void sandwichMaker(void* arg){
 		thread_broadcast(1, hasRoom);
 		thread_unlock(1);
 	}	
-	//thread_unlock(1);
 }
 
 
 void cashiers(void* arg){
-	//thread_lock(1);
 	int cashierID = (intptr_t) arg;
 	while (cashierMap[cashierID].size() > 0){
 		thread_lock(1);
@@ -103,7 +100,6 @@ void cashiers(void* arg){
 		thread_signal(1, isFull);
 		thread_unlock(1);
 	}
-	//thread_unlock(1);
 }
 
 
